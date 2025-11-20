@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { SAMPLE_PROMPTS, ASPECT_RATIOS, MATTING_PROMPT, HD_SUFFIX } from '../constants';
-import { AppState, AspectRatio, GenerationMode, Dimensions, PresetStyle } from '../types';
-import { Wand2, Loader2, Eraser, Crop, Sparkles, PenTool, RefreshCw, Settings2, ImagePlus, X, Droplets } from 'lucide-react';
+import { SAMPLE_PROMPTS, ASPECT_RATIOS, MATTING_PROMPT, HD_SUFFIX, REMOVE_PROMPT } from '../constants';
+import { AppState, AspectRatio, GenerationMode, Dimensions, PresetStyle, DrawingTool } from '../types';
+import { Wand2, Loader2, Eraser, Crop, Sparkles, PenTool, RefreshCw, Settings2, ImagePlus, X, Droplets, Brush, Square, Trash2, Circle, Scissors, MoveRight, Palette } from 'lucide-react';
 
 interface ControlsProps {
   prompt: string;
@@ -25,7 +25,26 @@ interface ControlsProps {
   // Transparent Material
   isTransparent: boolean;
   setIsTransparent: (val: boolean) => void;
+  // Brush Props
+  brushSize: number;
+  setBrushSize: (size: number) => void;
+  toolType: DrawingTool;
+  setToolType: (t: DrawingTool) => void;
+  drawingColor: string;
+  setDrawingColor: (color: string) => void;
+  onClearMask: () => void;
 }
+
+const COLORS = [
+  '#ef4444', // Red
+  '#f97316', // Orange
+  '#eab308', // Yellow
+  '#22c55e', // Green
+  '#3b82f6', // Blue
+  '#a855f7', // Purple
+  '#000000', // Black
+  '#ffffff', // White
+];
 
 const Controls: React.FC<ControlsProps> = ({ 
   prompt, 
@@ -45,7 +64,14 @@ const Controls: React.FC<ControlsProps> = ({
   onReferenceImageSelect,
   onClearReferenceImage,
   isTransparent,
-  setIsTransparent
+  setIsTransparent,
+  brushSize,
+  setBrushSize,
+  toolType,
+  setToolType,
+  drawingColor,
+  setDrawingColor,
+  onClearMask
 }) => {
   const isLoading = appState === AppState.GENERATING;
   const [customPrompt, setCustomPrompt] = useState('');
@@ -68,23 +94,34 @@ const Controls: React.FC<ControlsProps> = ({
   }, []);
 
   // Helper to generate prompt from template
-  const generatePromptFromStyle = (style: PresetStyle) => {
+  const generatePromptFromStyle = (style: PresetStyle, currentPromptRaw: string = '') => {
     const templates = style.prompts;
-    const randomTemplate = templates[Math.floor(Math.random() * templates.length)];
-    const productTerm = "画面中的主体商品"; 
-    return randomTemplate.replace(/\{product\}/g, productTerm);
+    if (!templates || templates.length === 0) return "";
+    if (templates.length === 1) {
+        return templates[0].replace(/\{product\}/g, "画面中的主体商品");
+    }
+
+    let newPrompt = "";
+    let attempts = 0;
+    const currentClean = currentPromptRaw.replace(HD_SUFFIX, '');
+
+    do {
+        const randomTemplate = templates[Math.floor(Math.random() * templates.length)];
+        newPrompt = randomTemplate.replace(/\{product\}/g, "画面中的主体商品");
+        attempts++;
+    } while (newPrompt === currentClean && attempts < 10); 
+
+    return newPrompt;
   };
 
-  // Handle manual typing
   const handleCustomPromptChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setCustomPrompt(e.target.value);
     setSelectedStyleId(null); 
-    if (mode !== GenerationMode.MATTING) {
+    if (mode !== GenerationMode.MATTING && mode !== GenerationMode.REMOVE) {
       setPrompt(e.target.value + (isHD ? HD_SUFFIX : ''));
     }
   };
 
-  // Handle style selection
   const handleStyleClick = (style: PresetStyle) => {
     setSelectedStyleId(style.id);
     const newPrompt = generatePromptFromStyle(style);
@@ -93,12 +130,11 @@ const Controls: React.FC<ControlsProps> = ({
     setMode(GenerationMode.SCENE);
   };
 
-  // Handle refresh prompt
   const handleRefreshPrompt = () => {
     if (selectedStyleId) {
       const style = SAMPLE_PROMPTS.find(s => s.id === selectedStyleId);
       if (style) {
-        const newPrompt = generatePromptFromStyle(style);
+        const newPrompt = generatePromptFromStyle(style, customPrompt);
         setCustomPrompt(newPrompt);
         setPrompt(newPrompt + (isHD ? HD_SUFFIX : ''));
       }
@@ -111,14 +147,13 @@ const Controls: React.FC<ControlsProps> = ({
     }
   };
 
-  // Effect: Update prompt based on mode/HD
   useEffect(() => {
     if (mode === GenerationMode.MATTING) {
       setPrompt(MATTING_PROMPT);
+    } else if (mode === GenerationMode.REMOVE) {
+      setPrompt(REMOVE_PROMPT);
     } else if (mode === GenerationMode.SCENE) {
       if (styleSource === 'REFERENCE' && !customPrompt) {
-          // Default prompt for reference mode if empty
-          // Note: The detailed instruction is prepended in the service
           setPrompt("完美融合参考风格，智能补全光影与细节。" + (isHD ? HD_SUFFIX : ''));
       } else if (customPrompt) {
         setPrompt(customPrompt + (isHD ? HD_SUFFIX : ''));
@@ -126,9 +161,8 @@ const Controls: React.FC<ControlsProps> = ({
     } else if (mode === GenerationMode.EDIT) {
        setPrompt(customPrompt);
     }
-  }, [mode, isHD, setPrompt, styleSource]); 
+  }, [mode, isHD, setPrompt, styleSource, customPrompt]); 
 
-  // Effect: When switching to Reference mode, clear preset selection
   useEffect(() => {
     if (styleSource === 'REFERENCE') {
         setSelectedStyleId(null);
@@ -139,37 +173,143 @@ const Controls: React.FC<ControlsProps> = ({
     <div className="space-y-6">
       
       {/* Mode Selection */}
-      <div className="bg-slate-50 p-1 rounded-xl flex text-sm font-medium shadow-inner">
+      <div className="bg-slate-50 p-1 rounded-xl grid grid-cols-2 sm:grid-cols-4 gap-1 text-sm font-medium shadow-inner">
         <button
           onClick={() => setMode(GenerationMode.SCENE)}
-          className={`flex-1 py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition-all ${mode === GenerationMode.SCENE ? 'bg-white text-indigo-600 shadow-sm ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-700'}`}
+          className={`py-2 px-2 rounded-lg flex items-center justify-center gap-1.5 transition-all ${mode === GenerationMode.SCENE ? 'bg-white text-indigo-600 shadow-sm ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-700'}`}
         >
           <Sparkles className="w-4 h-4" /> 场景生成
         </button>
         <button
           onClick={() => setMode(GenerationMode.EDIT)}
-          className={`flex-1 py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition-all ${mode === GenerationMode.EDIT ? 'bg-white text-indigo-600 shadow-sm ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-700'}`}
+          className={`py-2 px-2 rounded-lg flex items-center justify-center gap-1.5 transition-all ${mode === GenerationMode.EDIT ? 'bg-white text-indigo-600 shadow-sm ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-700'}`}
         >
-          <PenTool className="w-4 h-4" /> 智能重绘
+          <PenTool className="w-4 h-4" /> 视觉编辑
+        </button>
+        <button
+          onClick={() => setMode(GenerationMode.REMOVE)}
+          className={`py-2 px-2 rounded-lg flex items-center justify-center gap-1.5 transition-all ${mode === GenerationMode.REMOVE ? 'bg-white text-indigo-600 shadow-sm ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-700'}`}
+        >
+          <Eraser className="w-4 h-4" /> 智能消除
         </button>
         <button
           onClick={() => setMode(GenerationMode.MATTING)}
-          className={`flex-1 py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition-all ${mode === GenerationMode.MATTING ? 'bg-white text-indigo-600 shadow-sm ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-700'}`}
+          className={`py-2 px-2 rounded-lg flex items-center justify-center gap-1.5 transition-all ${mode === GenerationMode.MATTING ? 'bg-white text-indigo-600 shadow-sm ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-700'}`}
         >
-          <Eraser className="w-4 h-4" /> 自动抠图
+          <Scissors className="w-4 h-4" /> 自动抠图
         </button>
       </div>
 
+      {/* Tools Panel (For EDIT or REMOVE) */}
+      {(mode === GenerationMode.EDIT || mode === GenerationMode.REMOVE) && (
+        <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-3 animate-in fade-in duration-300">
+           <div className="flex items-center justify-between">
+             <label className="text-xs font-bold text-slate-600 uppercase flex items-center gap-2">
+                {mode === GenerationMode.REMOVE ? <Eraser className="w-3 h-3" /> : <PenTool className="w-3 h-3" />}
+                {mode === GenerationMode.REMOVE ? '涂抹要消除的区域' : '在图片上绘制修改指令'}
+             </label>
+             <button 
+               onClick={onClearMask}
+               className="text-xs text-red-500 hover:text-red-600 flex items-center gap-1 px-2 py-1 rounded hover:bg-red-50 transition-colors"
+             >
+               <Trash2 className="w-3 h-3" /> 清除标记
+             </button>
+           </div>
+           
+           {/* Tool Selection */}
+           <div className="flex items-center gap-2 flex-wrap">
+             <div className="flex bg-slate-100 rounded-lg p-1 gap-1">
+                <button 
+                  onClick={() => setToolType('brush')}
+                  className={`p-2 rounded-md transition-all ${toolType === 'brush' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  title="自由画笔"
+                >
+                  <Brush className="w-4 h-4" />
+                </button>
+                <button 
+                  onClick={() => setToolType('arrow')}
+                  className={`p-2 rounded-md transition-all ${toolType === 'arrow' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  title="箭头标记"
+                >
+                  <MoveRight className="w-4 h-4" />
+                </button>
+                <button 
+                  onClick={() => setToolType('rect')}
+                  className={`p-2 rounded-md transition-all ${toolType === 'rect' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  title="矩形框选"
+                >
+                  <Square className="w-4 h-4" />
+                </button>
+                <button 
+                  onClick={() => setToolType('circle')}
+                  className={`p-2 rounded-md transition-all ${toolType === 'circle' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  title="圆形框选"
+                >
+                  <Circle className="w-4 h-4" />
+                </button>
+             </div>
+             
+             <div className="flex-1 flex items-center gap-2 px-2 min-w-[100px]">
+                <input 
+                  type="range" 
+                  min="5" 
+                  max="80" 
+                  value={brushSize} 
+                  onChange={(e) => setBrushSize(Number(e.target.value))}
+                  className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                  title="线条粗细"
+                />
+             </div>
+           </div>
+
+           {/* Color Picker (Only for Edit Mode) */}
+           {mode === GenerationMode.EDIT && (
+             <div className="flex items-center gap-2 pt-1 border-t border-slate-100">
+               <Palette className="w-3 h-3 text-slate-400" />
+               <div className="flex gap-1 flex-wrap">
+                  {COLORS.map(c => (
+                    <button
+                      key={c}
+                      onClick={() => setDrawingColor(c)}
+                      className={`w-6 h-6 rounded-full border border-slate-200 shadow-sm transition-transform hover:scale-110 ${drawingColor === c ? 'ring-2 ring-indigo-500 ring-offset-1 scale-110' : ''}`}
+                      style={{ backgroundColor: c }}
+                    />
+                  ))}
+                  <div className="relative flex items-center justify-center w-6 h-6 rounded-full border border-slate-200 overflow-hidden">
+                     <input 
+                       type="color" 
+                       value={drawingColor}
+                       onChange={(e) => setDrawingColor(e.target.value)}
+                       className="absolute inset-0 w-[150%] h-[150%] -top-1/4 -left-1/4 cursor-pointer p-0 border-0"
+                     />
+                  </div>
+               </div>
+             </div>
+           )}
+
+           <p className="text-[10px] text-amber-600 bg-amber-50 p-1.5 rounded">
+              提示：在【视觉编辑】模式下，您的标记会合成到原图上一起发给AI。请在下方提示词中引用您的标记，例如"把红色箭头指向的区域变成..."
+           </p>
+        </div>
+      )}
+
       {/* Aspect Ratio */}
       <div>
-        <label className="block text-sm font-semibold text-slate-900 mb-2 flex items-center gap-2">
-          <Crop className="w-4 h-4 text-slate-500" /> 画幅尺寸
+        <label className="block text-sm font-semibold text-slate-900 mb-2 flex items-center gap-2 justify-between">
+          <span className="flex items-center gap-2"><Crop className="w-4 h-4 text-slate-500" /> 画幅尺寸</span>
+          {(mode === GenerationMode.EDIT || mode === GenerationMode.REMOVE) && (
+            <span className="text-[10px] text-slate-400 font-normal bg-slate-100 px-2 py-0.5 rounded">
+              已锁定为原图比例
+            </span>
+          )}
         </label>
-        <div className="grid grid-cols-3 gap-2 mb-3">
+        
+        <div className={`grid grid-cols-3 gap-2 mb-3 ${(mode === GenerationMode.EDIT || mode === GenerationMode.REMOVE) ? 'opacity-50 pointer-events-none grayscale' : ''}`}>
           {ASPECT_RATIOS.map((ratio) => (
             <button
               key={ratio.value}
               onClick={() => setAspectRatio(ratio.value)}
+              disabled={mode === GenerationMode.EDIT || mode === GenerationMode.REMOVE}
               className={`py-2 px-2 rounded-lg border text-xs font-medium transition-all flex flex-col items-center justify-center gap-1 ${
                 aspectRatio === ratio.value 
                   ? 'bg-indigo-50 border-indigo-500 text-indigo-700 ring-1 ring-indigo-500' 
@@ -182,7 +322,7 @@ const Controls: React.FC<ControlsProps> = ({
           ))}
         </div>
         
-        {aspectRatio === 'custom' && (
+        {aspectRatio === 'custom' && mode !== GenerationMode.EDIT && mode !== GenerationMode.REMOVE && (
            <div className="flex items-center gap-2 bg-slate-50 p-3 rounded-lg border border-slate-200 animate-in fade-in slide-in-from-top-2 duration-200">
               <div className="flex-1">
                 <label className="text-xs text-slate-500 mb-1 block">宽度 (px)</label>
@@ -207,7 +347,7 @@ const Controls: React.FC<ControlsProps> = ({
         )}
       </div>
 
-      {/* Style Selection / Reference Image Toggle */}
+      {/* Style Selection */}
       {mode === GenerationMode.SCENE && (
         <div className="space-y-3">
            <div className="flex items-center gap-4 border-b border-slate-200 pb-1">
@@ -215,13 +355,13 @@ const Controls: React.FC<ControlsProps> = ({
                 onClick={() => setStyleSource('PRESET')}
                 className={`text-sm font-semibold pb-2 px-1 transition-colors ${styleSource === 'PRESET' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-500 hover:text-slate-800'}`}
              >
-               预设风格库
+               风格库 (150+)
              </button>
              <button 
                 onClick={() => setStyleSource('REFERENCE')}
                 className={`text-sm font-semibold pb-2 px-1 transition-colors ${styleSource === 'REFERENCE' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-500 hover:text-slate-800'}`}
              >
-               参考图生成 (图生图)
+               参考图 (图生图)
              </button>
            </div>
 
@@ -229,7 +369,7 @@ const Controls: React.FC<ControlsProps> = ({
               <div className="max-h-80 overflow-y-auto pr-1 custom-scrollbar space-y-5 border border-slate-200 rounded-xl p-3 bg-slate-50/50">
                 {Object.entries(categories).map(([catName, styles]) => (
                   <div key={catName}>
-                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 ml-1 border-b border-slate-200 pb-1">{catName}</h4>
+                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 ml-1 border-b border-slate-200 pb-1 sticky top-0 bg-slate-50/95 backdrop-blur-sm py-1 z-10">{catName}</h4>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                       {(styles as PresetStyle[]).map((style) => (
                         <button
@@ -246,16 +386,14 @@ const Controls: React.FC<ControlsProps> = ({
               </div>
            ) : (
               <div className="border-2 border-dashed border-slate-300 rounded-xl p-4 bg-slate-50">
-                 <label className="block text-xs font-medium text-slate-600 mb-2">上传参考海报（AI将模仿其构图与风格）</label>
-                 
+                 <label className="block text-xs font-medium text-slate-600 mb-2">上传参考海报</label>
                  {!referenceImage ? (
                    <div 
                      onClick={() => refFileInputRef.current?.click()}
                      className="flex flex-col items-center justify-center py-6 px-4 bg-white rounded-lg border border-slate-200 hover:border-indigo-400 hover:bg-indigo-50 transition-all cursor-pointer text-center"
                    >
                      <ImagePlus className="w-6 h-6 text-indigo-400 mb-2" />
-                     <span className="text-sm text-indigo-600 font-medium">点击上传参考图</span>
-                     <span className="text-xs text-slate-400 mt-1">支持 JPG / PNG</span>
+                     <span className="text-sm text-indigo-600 font-medium">点击上传</span>
                    </div>
                  ) : (
                    <div className="relative group rounded-lg overflow-hidden border border-slate-200 bg-white">
@@ -267,9 +405,6 @@ const Controls: React.FC<ControlsProps> = ({
                          >
                            <X className="w-4 h-4" />
                          </button>
-                      </div>
-                      <div className="absolute bottom-0 left-0 right-0 bg-black/60 p-1 text-center">
-                        <span className="text-xs text-white font-medium">已加载参考风格</span>
                       </div>
                    </div>
                  )}
@@ -285,97 +420,57 @@ const Controls: React.FC<ControlsProps> = ({
         </div>
       )}
 
-      {/* Text Input Area */}
+      {/* Text Input */}
       <div className="relative">
         <label htmlFor="prompt" className="block text-sm font-semibold text-slate-900 mb-2 flex justify-between items-end">
           <span>
             {mode === GenerationMode.SCENE 
-               ? (styleSource === 'REFERENCE' ? '补充描述 (AI将自动优化细节)' : '生成提示词') 
+               ? '生成提示词' 
                : mode === GenerationMode.EDIT 
-               ? '重绘指令' 
+               ? '编辑指令' 
+               : mode === GenerationMode.REMOVE
+               ? '操作指令'
                : '提示词 (自动)'}
-            {mode === GenerationMode.EDIT && <span className="text-xs font-normal text-slate-500 ml-2">例如：把背景换成沙滩...</span>}
+            
+            {mode === GenerationMode.EDIT && <span className="text-xs font-normal text-slate-500 ml-2">描述如何处理标记区域...</span>}
           </span>
           
-          {/* Refresh Button for Scene Mode */}
           {mode === GenerationMode.SCENE && selectedStyleId && styleSource === 'PRESET' && (
             <button 
               onClick={handleRefreshPrompt}
-              className="text-xs flex items-center gap-1 text-indigo-600 hover:text-indigo-800 transition-colors bg-indigo-50 px-2 py-1 rounded-md"
+              className="text-xs flex items-center gap-1 text-indigo-600 hover:text-indigo-800 transition-colors bg-indigo-50 px-2 py-1 rounded-md active:scale-95"
               title="换一组描述"
             >
-              <RefreshCw className="w-3 h-3" /> 刷新描述
+              <RefreshCw className="w-3 h-3" /> 换个描述
             </button>
           )}
         </label>
         
         <div className="relative">
-          <textarea
-            id="prompt"
-            value={mode === GenerationMode.MATTING ? MATTING_PROMPT : customPrompt}
-            onChange={handleCustomPromptChange}
-            readOnly={mode === GenerationMode.MATTING}
-            placeholder={
-              mode === GenerationMode.EDIT ? "描述您想修改的地方..." : 
-              styleSource === 'REFERENCE' ? "AI 将自动分析产品材质并匹配参考图。您也可以补充具体要求，例如：'保持金色调，但背景更亮一些'..." :
-              "选择风格后自动生成，支持手动修改..."
-            }
-            className={`w-full p-3 rounded-lg border text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none h-24 text-sm leading-relaxed ${mode === GenerationMode.MATTING ? 'bg-slate-100 text-slate-500' : 'bg-white border-slate-300'}`}
-          />
-        </div>
-      </div>
-
-      {/* Optimization Toggles */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {/* HD Toggle */}
-        <div className="flex items-center justify-between bg-indigo-50/50 p-3 rounded-lg border border-indigo-100">
-          <label className="flex items-center gap-3 cursor-pointer select-none w-full">
-            <div className="relative flex-shrink-0">
-              <input 
-                type="checkbox" 
-                className="sr-only peer" 
-                checked={isHD} 
-                onChange={(e) => setIsHD(e.target.checked)}
-                disabled={mode === GenerationMode.MATTING}
-              />
-              <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+          {mode === GenerationMode.REMOVE ? (
+            <div className="w-full p-3 rounded-lg border border-slate-200 bg-slate-50 h-24 flex items-center justify-center text-slate-500 text-sm italic">
+              <Eraser className="w-4 h-4 mr-2" /> 已启用智能消除，请在图片上涂抹红色区域。
             </div>
-            <div className="flex flex-col">
-              <span className="font-medium text-slate-900 text-sm flex items-center gap-1">
-                 高清修复 & 细节 <Settings2 className="w-3 h-3 text-indigo-500" />
-              </span>
-              <span className="text-xs text-slate-500">增强照片真实感与光影</span>
-            </div>
-          </label>
-        </div>
-
-        {/* Transparent Material Toggle */}
-        <div className="flex items-center justify-between bg-cyan-50/50 p-3 rounded-lg border border-cyan-100">
-          <label className="flex items-center gap-3 cursor-pointer select-none w-full">
-            <div className="relative flex-shrink-0">
-              <input 
-                type="checkbox" 
-                className="sr-only peer" 
-                checked={isTransparent} 
-                onChange={(e) => setIsTransparent(e.target.checked)}
-                disabled={mode === GenerationMode.MATTING}
-              />
-              <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyan-600"></div>
-            </div>
-            <div className="flex flex-col">
-              <span className="font-medium text-slate-900 text-sm flex items-center gap-1">
-                 透明/玻璃材质 <Droplets className="w-3 h-3 text-cyan-500" />
-              </span>
-              <span className="text-xs text-slate-500">增强透光、折射与焦散效果</span>
-            </div>
-          </label>
+          ) : (
+            <textarea
+              id="prompt"
+              value={mode === GenerationMode.MATTING ? MATTING_PROMPT : customPrompt}
+              onChange={handleCustomPromptChange}
+              readOnly={mode === GenerationMode.MATTING}
+              placeholder={
+                mode === GenerationMode.EDIT ? "例如：把红色圆圈里的背景换成沙滩... 或者：在蓝色箭头指向的地方添加一个Logo..." : 
+                "描述您想要的效果..."
+              }
+              className={`w-full p-3 rounded-lg border text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none h-24 text-sm leading-relaxed ${mode === GenerationMode.MATTING ? 'bg-slate-100 text-slate-500' : 'bg-white border-slate-300'}`}
+            />
+          )}
         </div>
       </div>
 
       {/* Generate Button */}
       <button
         onClick={onGenerate}
-        disabled={!hasImage || (!prompt.trim() && mode !== GenerationMode.MATTING) || isLoading}
+        disabled={!hasImage || (!prompt.trim() && mode !== GenerationMode.MATTING && mode !== GenerationMode.REMOVE) || isLoading}
         className={`w-full py-3.5 px-6 rounded-xl flex items-center justify-center gap-2 font-bold text-white shadow-lg transition-all transform active:scale-[0.98]
           ${!hasImage || isLoading 
             ? 'bg-slate-300 cursor-not-allowed shadow-none' 
@@ -385,21 +480,15 @@ const Controls: React.FC<ControlsProps> = ({
         {isLoading ? (
           <>
             <Loader2 className="w-5 h-5 animate-spin" />
-            {mode === GenerationMode.MATTING ? '正在智能抠图...' : mode === GenerationMode.EDIT ? '正在重绘中...' : '正在生成海报...'}
+            处理中...
           </>
         ) : (
           <>
             <Wand2 className="w-5 h-5" />
-            {mode === GenerationMode.MATTING ? '开始自动抠图' : mode === GenerationMode.EDIT ? '执行局部重绘' : '立即生成海报'}
+            {mode === GenerationMode.MATTING ? '开始自动抠图' : mode === GenerationMode.EDIT ? '执行视觉编辑' : mode === GenerationMode.REMOVE ? '一键智能消除' : '立即生成海报'}
           </>
         )}
       </button>
-      
-      {!hasImage && (
-        <p className="text-center text-xs text-amber-600 bg-amber-50 p-2 rounded border border-amber-100">
-          请先在左侧上传一张商品图片。
-        </p>
-      )}
     </div>
   );
 };

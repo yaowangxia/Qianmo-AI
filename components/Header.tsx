@@ -11,7 +11,7 @@ const Header: React.FC = () => {
               <Sparkles className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-slate-900 tracking-tight">ProductPoster AI</h1>
+              <h1 className="text-xl font-bold text-slate-900 tracking-tight">阡陌AI自动电商产品海报设计</h1>
               <p className="text-xs text-slate-500 font-medium hidden sm:block">由 Gemini 2.5 Flash Image 驱动</p>
             </div>
           </div>

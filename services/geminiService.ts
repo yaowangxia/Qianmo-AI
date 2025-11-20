@@ -1,7 +1,7 @@
 
 import { GoogleGenAI, Modality } from "@google/genai";
-import { AspectRatio } from "../types";
-import { ASPECT_RATIOS, REF_IMAGE_PROMPT_PREFIX, TRANSPARENT_MATERIAL_PROMPT, AUTO_DETAIL_ENHANCEMENT } from "../constants";
+import { AspectRatio, GenerationMode } from "../types";
+import { ASPECT_RATIOS, REF_IMAGE_PROMPT_PREFIX, TRANSPARENT_MATERIAL_PROMPT, AUTO_DETAIL_ENHANCEMENT, REMOVE_PROMPT } from "../constants";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
@@ -74,6 +74,85 @@ export const prepareImageForGeneration = (
   });
 };
 
+/**
+ * Prepares an image for processing without changing aspect ratio, just ensuring max size constraints.
+ */
+const prepareImageForEditing = (base64Image: string): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      // Limit max dimension to 1536 to avoid token limits
+      const MAX_DIM = 1536; 
+      let width = img.width;
+      let height = img.height;
+
+      if (width > MAX_DIM || height > MAX_DIM) {
+        const scale = Math.min(MAX_DIM / width, MAX_DIM / height);
+        width = Math.round(width * scale);
+        height = Math.round(height * scale);
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        reject(new Error("Canvas error"));
+        return;
+      }
+      
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      
+      ctx.drawImage(img, 0, 0, width, height);
+      
+      const dataUrl = canvas.toDataURL('image/png');
+      resolve(dataUrl.split(',')[1]);
+    };
+    img.onerror = (err) => reject(err);
+    img.src = `data:image/png;base64,${base64Image}`;
+  });
+};
+
+/**
+ * Composites the Drawing Layer (Visual Marks) onto the Source Image.
+ * This is used for "Visual Editing" mode.
+ */
+const compositeVisualLayer = (baseImageB64: string, visualLayerB64: string): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        const bg = new Image();
+        const layer = new Image();
+        
+        let loaded = 0;
+        const onLoaded = () => {
+            loaded++;
+            if (loaded === 2) {
+                const canvas = document.createElement('canvas');
+                canvas.width = bg.width;
+                canvas.height = bg.height;
+                const ctx = canvas.getContext('2d');
+                if (!ctx) { reject(new Error("Canvas error")); return; }
+
+                // Draw Background
+                ctx.drawImage(bg, 0, 0);
+                // Draw Visual Layer on top
+                ctx.drawImage(layer, 0, 0, bg.width, bg.height);
+
+                const dataUrl = canvas.toDataURL('image/png');
+                resolve(dataUrl.split(',')[1]);
+            }
+        };
+
+        bg.onload = onLoaded;
+        layer.onload = onLoaded;
+        bg.onerror = reject;
+        layer.onerror = reject;
+
+        bg.src = `data:image/png;base64,${baseImageB64}`;
+        layer.src = `data:image/png;base64,${visualLayerB64}`;
+    });
+};
+
 export const generateProductPoster = async (
   base64Image: string,
   mimeType: string,
@@ -81,44 +160,86 @@ export const generateProductPoster = async (
   ratio: AspectRatio = '1:1',
   customSize?: SizeConfig,
   referenceImageBase64?: string | null,
-  isTransparent: boolean = false
+  isTransparent: boolean = false,
+  maskImageBase64?: string | null,
+  mode: GenerationMode = GenerationMode.SCENE
 ): Promise<string> => {
   try {
-    const processedImageBase64 = await prepareImageForGeneration(base64Image, ratio, customSize);
+    let processedImageBase64: string;
+
+    // 1. Pre-processing Image Logic
+    if (mode === GenerationMode.EDIT) {
+         // Visual Editing: We need to merge the mask (drawings) onto the image
+         // NOTE: Here 'maskImageBase64' is actually the colored drawing layer.
+         if (maskImageBase64) {
+             // First ensure base image is sized correctly
+             const resizedBase = await prepareImageForEditing(base64Image);
+             // Then composite
+             processedImageBase64 = await compositeVisualLayer(resizedBase, maskImageBase64);
+         } else {
+             processedImageBase64 = await prepareImageForEditing(base64Image);
+         }
+    } else if (mode === GenerationMode.REMOVE) {
+         // Removal: Standard Inpainting requires untouched original + mask
+         processedImageBase64 = await prepareImageForEditing(base64Image);
+    } else {
+         // Scene / Matting: Resize with padding
+         processedImageBase64 = await prepareImageForGeneration(base64Image, ratio, customSize);
+    }
     
     const parts: any[] = [
       {
         inlineData: {
           data: processedImageBase64,
-          mimeType: 'image/jpeg', 
+          mimeType: 'image/png', // Always use PNG for edited/composed images
         },
       }
     ];
 
-    // If reference image exists, add it as the second part
     let finalPrompt = prompt;
-    if (referenceImageBase64) {
+
+    // 2. Logic Branching based on Mode
+    if (mode === GenerationMode.REMOVE && maskImageBase64) {
+       // --- REMOVAL MODE (Uses Binary Mask) ---
+       // Resize mask to match image
+       const processedMaskBase64 = await prepareImageForEditing(maskImageBase64);
+       parts.push({
+        inlineData: {
+          data: processedMaskBase64,
+          mimeType: 'image/png',
+        },
+       });
+       finalPrompt = REMOVE_PROMPT;
+
+    } else if (mode === GenerationMode.EDIT) {
+       // --- VISUAL EDIT MODE (Uses Composed Image, No Mask sent to API) ---
+       // We have already composited the image in step 1. 
+       // Now we just tell the AI what to do.
+       finalPrompt = `【Task: Visual Instruction Editing】
+1. Input Analysis: The input image contains visual markings (e.g., colored lines, arrows, boxes) drawn by the user.
+2. Instruction: ${prompt}
+3. Execution:
+   - Identify the area indicated by the user's markings.
+   - Apply the requested change ONLY to the indicated area or using the marking as a guide.
+   - **CRITICAL**: The final output should NOT contain the user's colored markings. They are for instruction only. Remove the colored lines/arrows in the final result and replace them with the generated content.
+   - Ensure natural lighting and perspective blending.`;
+
+    } else if (referenceImageBase64) {
+      // --- SCENE MODE (Style Transfer) ---
       parts.push({
         inlineData: {
           data: referenceImageBase64,
           mimeType: 'image/jpeg',
         },
       });
-      
-      // 1. Prepend robust instruction
-      finalPrompt = `${REF_IMAGE_PROMPT_PREFIX}\n\n补充描述：${prompt}`;
-      
-      // 2. Automatically append detail enhancement logic if in reference mode
-      // This ensures even simple prompts get high quality results
-      finalPrompt += AUTO_DETAIL_ENHANCEMENT;
+      finalPrompt = `${REF_IMAGE_PROMPT_PREFIX}\n\nAdditional Details: ${prompt}${AUTO_DETAIL_ENHANCEMENT}`;
     }
 
-    // Inject transparency prompt if flag is set
-    if (isTransparent) {
+    // 3. Global modifiers
+    if (isTransparent && mode !== GenerationMode.REMOVE) {
       finalPrompt += TRANSPARENT_MATERIAL_PROMPT;
     }
 
-    // Add text prompt last
     parts.push({ text: finalPrompt });
 
     const response = await ai.models.generateContent({
@@ -137,7 +258,7 @@ export const generateProductPoster = async (
       return part.inlineData.data;
     } else {
       console.error("Empty response candidates:", response);
-      throw new Error("AI 未返回图像数据，可能是因为触发了安全策略或服务器繁忙，请重试。");
+      throw new Error("AI did not return an image. Please try again.");
     }
   } catch (error) {
     console.error("Error generating product poster:", error);

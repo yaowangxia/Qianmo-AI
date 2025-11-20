@@ -1,3 +1,4 @@
+
 export interface GeneratedImage {
   url: string;
   timestamp: number;
@@ -21,14 +22,17 @@ export interface Dimensions {
 
 export enum GenerationMode {
   SCENE = 'SCENE',     // Generate background/scene
-  EDIT = 'EDIT',       // Instruction based edit
+  EDIT = 'EDIT',       // Visual Instruction based edit (Marking)
   MATTING = 'MATTING', // White background isolation
+  REMOVE = 'REMOVE',   // AI Magic Eraser (Masking)
 }
+
+export type DrawingTool = 'brush' | 'rect' | 'circle' | 'arrow';
 
 export interface PresetStyle {
   id: string;
   name: string;
   category: string; // Category for grouping
-  prompts: string[]; // Changed from single prompt to array for "refresh" feature
+  prompts: string[]; 
   color: string;
 }

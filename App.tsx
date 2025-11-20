@@ -1,9 +1,10 @@
+
 import React, { useState } from 'react';
 import Header from './components/Header';
 import UploadZone from './components/UploadZone';
 import Controls from './components/Controls';
 import ResultDisplay from './components/ResultDisplay';
-import { AppState, AspectRatio, GenerationMode, Dimensions } from './types';
+import { AppState, AspectRatio, GenerationMode, Dimensions, DrawingTool } from './types';
 import { generateProductPoster, fileToBase64 } from './services/geminiService';
 
 // Icon imports
@@ -18,6 +19,13 @@ const App: React.FC = () => {
   // Reference Image State
   const [referenceImage, setReferenceImage] = useState<string | null>(null);
   const [rawReferenceBase64, setRawReferenceBase64] = useState<string | null>(null);
+  
+  // Editing / Mask / Visual Mark State
+  const [maskBase64, setMaskBase64] = useState<string | null>(null);
+  const [brushSize, setBrushSize] = useState<number>(30);
+  const [toolType, setToolType] = useState<DrawingTool>('brush');
+  const [drawingColor, setDrawingColor] = useState<string>('#ef4444'); // Default Red
+  const [triggerClearMask, setTriggerClearMask] = useState<number>(0);
   
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
   
@@ -39,13 +47,13 @@ const App: React.FC = () => {
       setRawBase64(raw);
       setSourceMimeType(file.type);
       
-      // For display purposes
       const dataUri = `data:${file.type};base64,${raw}`;
       setSourceImage(dataUri);
       
       setAppState(AppState.IDLE);
       setGeneratedImage(null);
       setErrorMessage(null);
+      setMaskBase64(null);
     } catch (e) {
       console.error("File reading error", e);
       setErrorMessage("读取文件失败。");
@@ -56,7 +64,6 @@ const App: React.FC = () => {
     try {
       const raw = await fileToBase64(file);
       setRawReferenceBase64(raw);
-      
       const dataUri = `data:${file.type};base64,${raw}`;
       setReferenceImage(dataUri);
     } catch (e) {
@@ -76,27 +83,21 @@ const App: React.FC = () => {
     setAppState(AppState.IDLE);
     setPrompt('');
     setMode(GenerationMode.SCENE);
-    // Also clear reference
+    setMaskBase64(null);
     handleClearReference();
   };
 
   const handleRefine = () => {
     if (generatedImage && generatedImage.startsWith('data:image/')) {
-      // Move generated image to source
       setSourceImage(generatedImage);
-      
-      // Extract base64 from data URI
       const base64 = generatedImage.split(',')[1];
       setRawBase64(base64);
-      setSourceMimeType('image/jpeg'); // Generated images are usually jpegs
-      
-      // Reset generation state but keep logic ready for edit
+      setSourceMimeType('image/jpeg');
       setGeneratedImage(null);
       setMode(GenerationMode.EDIT);
-      setPrompt(''); // Clear prompt so user can type edit instruction
+      setPrompt(''); 
       setAppState(AppState.IDLE);
-      
-      // Scroll to top smoothly
+      setMaskBase64(null);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
@@ -114,11 +115,12 @@ const App: React.FC = () => {
         prompt,
         aspectRatio,
         customDimensions,
-        mode === GenerationMode.SCENE ? rawReferenceBase64 : null, // Only pass reference in scene mode
-        isTransparent
+        mode === GenerationMode.SCENE ? rawReferenceBase64 : null,
+        isTransparent,
+        (mode === GenerationMode.EDIT || mode === GenerationMode.REMOVE) ? maskBase64 : null, 
+        mode
       );
       
-      // Construct displayable URL
       const resultDataUri = `data:image/jpeg;base64,${resultBase64}`;
       setGeneratedImage(resultDataUri);
       setAppState(AppState.SUCCESS);
@@ -127,6 +129,11 @@ const App: React.FC = () => {
       setAppState(AppState.ERROR);
       setErrorMessage(err.message || "生成图片失败，请重试。");
     }
+  };
+
+  const handleClearMask = () => {
+    setTriggerClearMask(prev => prev + 1);
+    setMaskBase64(null);
   };
 
   return (
@@ -140,14 +147,33 @@ const App: React.FC = () => {
           <div className="lg:col-span-5 space-y-6 flex flex-col">
             
             <section className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 transition-all hover:shadow-md">
-              <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
-                <span className="bg-indigo-100 text-indigo-700 w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold">1</span>
-                {mode === GenerationMode.EDIT ? '当前底图' : '上传商品'}
+              <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2 justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="bg-indigo-100 text-indigo-700 w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold">1</span>
+                  {(mode === GenerationMode.EDIT || mode === GenerationMode.REMOVE) ? '区域编辑' : '上传商品'}
+                </div>
+                {mode === GenerationMode.EDIT && (
+                  <span className="text-xs font-normal text-indigo-600 bg-indigo-50 px-2 py-1 rounded-full">
+                    视觉编辑
+                  </span>
+                )}
+                {mode === GenerationMode.REMOVE && (
+                  <span className="text-xs font-normal text-red-600 bg-red-50 px-2 py-1 rounded-full">
+                    消除模式
+                  </span>
+                )}
               </h2>
               <UploadZone 
                 onFileSelect={handleFileSelect} 
                 currentImage={sourceImage}
                 onClear={handleClearImage}
+                // Edit Mode Props
+                mode={mode}
+                brushSize={brushSize}
+                toolType={toolType}
+                drawingColor={drawingColor}
+                onMaskChange={setMaskBase64}
+                triggerClearMask={triggerClearMask}
               />
             </section>
 
@@ -175,6 +201,14 @@ const App: React.FC = () => {
                 onClearReferenceImage={handleClearReference}
                 isTransparent={isTransparent}
                 setIsTransparent={setIsTransparent}
+                // Brush props
+                brushSize={brushSize}
+                setBrushSize={setBrushSize}
+                toolType={toolType}
+                setToolType={setToolType}
+                drawingColor={drawingColor}
+                setDrawingColor={setDrawingColor}
+                onClearMask={handleClearMask}
               />
             </section>
           </div>
@@ -207,7 +241,7 @@ const App: React.FC = () => {
       
       <footer className="bg-white border-t border-slate-200 py-8 mt-12">
          <div className="max-w-7xl mx-auto px-4 flex flex-col items-center gap-2 text-center text-slate-400 text-sm">
-           <p>&copy; {new Date().getFullYear()} ProductPoster AI. 为电商而生。</p>
+           <p>&copy; {new Date().getFullYear()} 阡陌 AI. 为电商而生。</p>
            <p className="text-xs">Powered by Google Gemini 2.5 Flash Image Model</p>
          </div>
       </footer>
