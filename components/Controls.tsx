@@ -144,6 +144,10 @@ const Controls: React.FC<ControlsProps> = ({
   const handleRefFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       onReferenceImageSelect(e.target.files[0]);
+      // Auto-fill prompt for reference style transfer
+      const autoPrompt = "Visual Style Transfer: Analyze the lighting, mood, and background texture of the reference image. Generate a NEW scene for the main product that mimics this style. Do not copy the reference composition exactly; adapt it to create a balanced commercial poster.";
+      setCustomPrompt(autoPrompt);
+      setPrompt(autoPrompt + (isHD ? HD_SUFFIX : ''));
     }
   };
 
@@ -153,8 +157,11 @@ const Controls: React.FC<ControlsProps> = ({
     } else if (mode === GenerationMode.REMOVE) {
       setPrompt(REMOVE_PROMPT);
     } else if (mode === GenerationMode.SCENE) {
+      // If user switched to Reference mode but hasn't typed anything, give them a hint in prompt
       if (styleSource === 'REFERENCE' && !customPrompt) {
-          setPrompt("完美融合参考风格，智能补全光影与细节。" + (isHD ? HD_SUFFIX : ''));
+          // This is handled by handleRefFileChange mostly, but as a fallback
+          const fallback = "Visual Style Transfer: Create a similar environment to the reference image but adapt the composition to fit the product naturally.";
+          setPrompt(fallback + (isHD ? HD_SUFFIX : ''));
       } else if (customPrompt) {
         setPrompt(customPrompt + (isHD ? HD_SUFFIX : ''));
       }
@@ -293,14 +300,20 @@ const Controls: React.FC<ControlsProps> = ({
         </div>
       )}
 
-      {/* Aspect Ratio */}
+      {/* Aspect Ratio - NOW ENABLED FOR REFERENCE MODE TOO */}
       <div>
         <label className="block text-sm font-semibold text-slate-900 mb-2 flex items-center gap-2 justify-between">
           <span className="flex items-center gap-2"><Crop className="w-4 h-4 text-slate-500" /> 画幅尺寸</span>
-          {(mode === GenerationMode.EDIT || mode === GenerationMode.REMOVE) && (
+          {(mode === GenerationMode.EDIT || mode === GenerationMode.REMOVE) ? (
             <span className="text-[10px] text-slate-400 font-normal bg-slate-100 px-2 py-0.5 rounded">
               已锁定为原图比例
             </span>
+          ) : (
+             styleSource === 'REFERENCE' && (
+              <span className="text-[10px] text-indigo-500 font-normal bg-indigo-50 px-2 py-0.5 rounded">
+                AI 将自动适配此比例
+              </span>
+             )
           )}
         </label>
         
@@ -355,7 +368,7 @@ const Controls: React.FC<ControlsProps> = ({
                 onClick={() => setStyleSource('PRESET')}
                 className={`text-sm font-semibold pb-2 px-1 transition-colors ${styleSource === 'PRESET' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-500 hover:text-slate-800'}`}
              >
-               风格库 (150+)
+               风格库 (200+)
              </button>
              <button 
                 onClick={() => setStyleSource('REFERENCE')}
@@ -386,7 +399,7 @@ const Controls: React.FC<ControlsProps> = ({
               </div>
            ) : (
               <div className="border-2 border-dashed border-slate-300 rounded-xl p-4 bg-slate-50">
-                 <label className="block text-xs font-medium text-slate-600 mb-2">上传参考海报</label>
+                 <label className="block text-xs font-medium text-slate-600 mb-2">上传参考海报 (复刻风格与光影)</label>
                  {!referenceImage ? (
                    <div 
                      onClick={() => refFileInputRef.current?.click()}
@@ -394,6 +407,7 @@ const Controls: React.FC<ControlsProps> = ({
                    >
                      <ImagePlus className="w-6 h-6 text-indigo-400 mb-2" />
                      <span className="text-sm text-indigo-600 font-medium">点击上传</span>
+                     <span className="text-xs text-slate-400 mt-1">AI 将模仿此图的光影和质感，但会自动适配您的尺寸</span>
                    </div>
                  ) : (
                    <div className="relative group rounded-lg overflow-hidden border border-slate-200 bg-white">

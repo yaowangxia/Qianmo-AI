@@ -15,14 +15,18 @@ export const REMOVE_PROMPT = "【任务：智能消除】请移除画面中被�
 
 export const HD_SUFFIX = ", 8k resolution, hyper-detailed, photorealistic, sharp focus, professional photography, masterpiece, commercial ad level, ray tracing, top-tier CGI render, Hasselblad X2D 100C.";
 
+// Updated Logic: Stronger instruction to ignore reference composition and follow input aspect ratio
 export const REF_IMAGE_PROMPT_PREFIX = `
-【Task: Stylized Poster Generation】
-1. Input:
-   - The first image is the [Main Product]. Keep its main body intact and clear.
-   - The second image is the [Style Reference]. Extract its background environment, composition, lighting atmosphere, and color tone.
+【Task: Adaptive Style Transfer & Scene Generation】
+1. Inputs Analysis:
+   - Image 1 (Base): The [Main Product] positioned on a canvas. **This canvas defines the OUTPUT ASPECT RATIO.**
+   - Image 2 (Reference): The [Style Source]. Use this ONLY for lighting, color palette, mood, and texture.
 2. Goal:
-   - Naturally blend the [Main Product] into the scene defined by the [Style Reference].
-   - Analyze the product's material and adjust highlights and shadows based on the reference lighting.
+   - Create a NEW scene for the [Main Product] that mimics the *vibe* of the [Style Source].
+   - **CRITICAL**: Do NOT copy the composition or aspect ratio of the Reference Image exactly.
+   - **CRITICAL**: Extend or crop the background to perfectly fit the aspect ratio of Image 1.
+   - If the Reference is horizontal but Output is vertical, generate more sky/ground naturally.
+   - Analyze the product's perspective and blend it realistically into this new, similar environment.
 `;
 
 export const AUTO_DETAIL_ENHANCEMENT = ", commercial advertising photography, delicate product texture, natural lighting transitions, clean and premium look, flawless, cinematic lighting.";

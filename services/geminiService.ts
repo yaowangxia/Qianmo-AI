@@ -183,7 +183,7 @@ export const generateProductPoster = async (
          // Removal: Standard Inpainting requires untouched original + mask
          processedImageBase64 = await prepareImageForEditing(base64Image);
     } else {
-         // Scene / Matting: Resize with padding
+         // Scene / Matting: Resize with padding to the TARGET ratio
          processedImageBase64 = await prepareImageForGeneration(base64Image, ratio, customSize);
     }
     
@@ -201,7 +201,6 @@ export const generateProductPoster = async (
     // 2. Logic Branching based on Mode
     if (mode === GenerationMode.REMOVE && maskImageBase64) {
        // --- REMOVAL MODE (Uses Binary Mask) ---
-       // Resize mask to match image
        const processedMaskBase64 = await prepareImageForEditing(maskImageBase64);
        parts.push({
         inlineData: {
@@ -212,9 +211,7 @@ export const generateProductPoster = async (
        finalPrompt = REMOVE_PROMPT;
 
     } else if (mode === GenerationMode.EDIT) {
-       // --- VISUAL EDIT MODE (Uses Composed Image, No Mask sent to API) ---
-       // We have already composited the image in step 1. 
-       // Now we just tell the AI what to do.
+       // --- VISUAL EDIT MODE ---
        finalPrompt = `【Task: Visual Instruction Editing】
 1. Input Analysis: The input image contains visual markings (e.g., colored lines, arrows, boxes) drawn by the user.
 2. Instruction: ${prompt}
@@ -225,14 +222,28 @@ export const generateProductPoster = async (
    - Ensure natural lighting and perspective blending.`;
 
     } else if (referenceImageBase64) {
-      // --- SCENE MODE (Style Transfer) ---
+      // --- SCENE MODE (Style Transfer with Reference) ---
       parts.push({
         inlineData: {
           data: referenceImageBase64,
           mimeType: 'image/jpeg',
         },
       });
-      finalPrompt = `${REF_IMAGE_PROMPT_PREFIX}\n\nAdditional Details: ${prompt}${AUTO_DETAIL_ENHANCEMENT}`;
+      
+      // Determine dimension label for prompt injection
+      let ratioLabel = "Square 1:1";
+      if (ratio === 'custom' && customSize) {
+         ratioLabel = `Custom Dimensions ${customSize.width}x${customSize.height}`;
+      } else {
+         const found = ASPECT_RATIOS.find(r => r.value === ratio);
+         if (found) ratioLabel = found.label;
+      }
+
+      finalPrompt = `${REF_IMAGE_PROMPT_PREFIX}
+      
+      【Output Constraint】: The final image MUST maintain the aspect ratio of Image 1 (${ratioLabel}).
+      
+      Details to generate: ${prompt}${AUTO_DETAIL_ENHANCEMENT}`;
     }
 
     // 3. Global modifiers
